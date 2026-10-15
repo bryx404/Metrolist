@@ -28,6 +28,12 @@ jobs:
           java-version: "21"
           distribution: temurin
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-37
+          accept-android-sdk-licenses: true
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
