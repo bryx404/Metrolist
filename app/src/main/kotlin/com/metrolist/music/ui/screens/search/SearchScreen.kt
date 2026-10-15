@@ -5,28 +5,37 @@
 
 package com.metrolist.music.ui.screens.search
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -36,26 +45,35 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.SavedStateHandle
-import com.metrolist.music.LocalNavController
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.metrolist.innertube.models.WatchEndpoint
 import com.metrolist.innertube.utils.YouTubeUrlParser
 import com.metrolist.music.LocalDatabase
 import com.metrolist.music.LocalIsPlayerExpanded
+import com.metrolist.music.LocalNavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
@@ -68,14 +86,38 @@ import com.metrolist.music.ui.component.HideOnScrollFAB
 import com.metrolist.music.utils.SearchRoutes
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
+import com.metrolist.music.viewmodels.MoodAndGenresViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+// ───────────────────────── Estilo Spotify ─────────────────────────
+private val SpotifyBlack = Color(0xFF000000)
+private val SearchBarWhite = Color(0xFFFFFFFF)
+private val SearchBarText = Color(0xFF121212)
+private val SearchBarHint = Color(0xFF5E5E5E)
+
+/** Colores vibrantes de las tarjetas (rosa, verde oscuro, azul, morado, etc.) */
+private val CardColors =
+    listOf(
+        Color(0xFFDC148C), // rosa
+        Color(0xFF006450), // verde oscuro
+        Color(0xFF2D46B9), // azul índigo
+        Color(0xFF8400E7), // morado eléctrico
+        Color(0xFF777777), // gris
+        Color(0xFF8D67AB), // lavanda
+        Color(0xFF1E3264), // azul marino
+        Color(0xFFE8115B), // rojo-rosado
+        Color(0xFF148A08), // verde
+        Color(0xFF0D73EC), // azul vibrante
+        Color(0xFFBA5D07), // naranja quemado
+        Color(0xFF477D95), // azul acero
+    )
+
 @Composable
 fun SearchScreen(
-    pureBlack: Boolean,
+    pureBlack: Boolean, // se mantiene por compatibilidad: esta pantalla fuerza negro puro
     savedStateHandle: SavedStateHandle,
+    moodAndGenresViewModel: MoodAndGenresViewModel = hiltViewModel(),
 ) {
     val navController = LocalNavController.current
     val database = LocalDatabase.current
@@ -88,20 +130,18 @@ fun SearchScreen(
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val lazyListState = rememberLazyListState()
     var isHandlingScrollToTop by remember { mutableStateOf(false) }
+    var isSearchFocused by remember { mutableStateOf(false) }
 
-    val scrollToTopCount by savedStateHandle.getStateFlow("scrollToTopCount", 0).collectAsStateWithLifecycle(initialValue = 0)
+    val moodAndGenres by moodAndGenresViewModel.moodAndGenres.collectAsStateWithLifecycle()
+
+    val scrollToTopCount by savedStateHandle
+        .getStateFlow("scrollToTopCount", 0)
+        .collectAsStateWithLifecycle(initialValue = 0)
 
     var lastHandledCount by rememberSaveable { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        if (!isPlayerExpanded) {
-            kotlinx.coroutines.delay(100)
-            try {
-                focusRequester.requestFocus()
-                keyboardController?.show()
-            } catch (e: Exception) {
-            }
-        }
-    }
+
+    // Al pulsar de nuevo la pestaña "Buscar" se enfoca la barra y se abre el teclado.
+    // (Ya no se enfoca automáticamente al entrar: primero se ve la cuadrícula, como en Spotify.)
     LaunchedEffect(scrollToTopCount) {
         if (scrollToTopCount > lastHandledCount) {
             lastHandledCount = scrollToTopCount
@@ -173,143 +213,159 @@ fun SearchScreen(
     }
 
     val onSearch: (String) -> Unit = { searchQuery -> handleSearch(searchQuery) }
-
     val onSearchFromSuggestion: (String) -> Unit = { searchQuery -> handleSearch(searchQuery) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        BasicTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            modifier =
-                                Modifier
-                                    .weight(1f)
-                                    .focusRequester(focusRequester),
-                            textStyle =
-                                TextStyle(
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontSize = 16.sp,
-                                ),
-                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                            singleLine = true,
-                            decorationBox = { innerTextField ->
-                                if (query.text.isEmpty()) {
-                                    Text(
-                                        text =
-                                            stringResource(
-                                                when (searchSource) {
-                                                    SearchSource.LOCAL -> R.string.search_library
-                                                    SearchSource.ONLINE -> R.string.search_yt_music
-                                                },
-                                            ),
-                                        style =
-                                            TextStyle(
-                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                                                fontSize = 16.sp,
-                                            ),
-                                    )
-                                }
-                                innerTextField()
-                            },
-                            keyboardOptions =
-                                KeyboardOptions(
-                                    imeAction = ImeAction.Search,
-                                ),
-                            keyboardActions =
-                                KeyboardActions(
-                                    onSearch = { onSearch(query.text) },
-                                ),
-                        )
+    // La cuadrícula "Explorar todo" se ve cuando no se está escribiendo (modo online)
+    val showExploreGrid =
+        searchSource == SearchSource.ONLINE && query.text.isEmpty() && !isSearchFocused
 
-                        Row {
-                            if (query.text.isNotEmpty()) {
-                                IconButton(onClick = { query = TextFieldValue("") }) {
-                                    Icon(
-                                        painter = painterResource(R.drawable.close),
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurface,
-                                    )
-                                }
-                            }
-                            IconButton(
-                                onClick = {
-                                    searchSource =
-                                        if (searchSource == SearchSource.ONLINE) {
-                                            SearchSource.LOCAL
-                                        } else {
-                                            SearchSource.ONLINE
-                                        }
-                                },
-                            ) {
-                                Icon(
-                                    painter =
-                                        painterResource(
-                                            when (searchSource) {
-                                                SearchSource.LOCAL -> R.drawable.library_music
-                                                SearchSource.ONLINE -> R.drawable.language
-                                            },
-                                        ),
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                )
-                            }
-                        }
-                    }
-                },
-                navigationIcon = {
+    Scaffold(
+        containerColor = SpotifyBlack,
+    ) { _ ->
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .background(SpotifyBlack),
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // ───────── Barra de búsqueda blanca ─────────
+                Row(
+                    modifier =
+                        Modifier
+                            .statusBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(SearchBarWhite),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     IconButton(onClick = { navController.navigateUp() }) {
                         Icon(
                             painter = painterResource(R.drawable.arrow_back),
                             contentDescription = stringResource(R.string.dismiss),
-                            tint = MaterialTheme.colorScheme.onSurface,
+                            tint = SearchBarText,
                         )
                     }
-                },
-                colors =
-                    TopAppBarDefaults.topAppBarColors(
-                        containerColor = if (pureBlack) Color.Black else MaterialTheme.colorScheme.surfaceContainer,
-                    ),
-            )
-        },
-        containerColor = if (pureBlack) Color.Black else MaterialTheme.colorScheme.background,
-    ) { paddingValues ->
-        Box(
-            modifier =
-                Modifier
-                    .padding(top = paddingValues.calculateTopPadding())
-                    .fillMaxSize(),
-        ) {
-            when (searchSource) {
-                SearchSource.LOCAL -> {
-                    LocalSearchScreen(
-                        query = query.text,
-                        onDismiss = { navController.navigateUp() },
-                        pureBlack = pureBlack,
+
+                    BasicTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .focusRequester(focusRequester)
+                                .onFocusChanged { isSearchFocused = it.isFocused },
+                        textStyle =
+                            TextStyle(
+                                color = SearchBarText,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium,
+                            ),
+                        cursorBrush = SolidColor(SearchBarText),
+                        singleLine = true,
+                        decorationBox = { innerTextField ->
+                            if (query.text.isEmpty()) {
+                                Text(
+                                    text =
+                                        stringResource(
+                                            when (searchSource) {
+                                                SearchSource.LOCAL -> R.string.search_library
+                                                SearchSource.ONLINE -> R.string.search_yt_music
+                                            },
+                                        ),
+                                    style =
+                                        TextStyle(
+                                            color = SearchBarHint,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Medium,
+                                        ),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            innerTextField()
+                        },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { onSearch(query.text) }),
                     )
+
+                    if (query.text.isNotEmpty()) {
+                        IconButton(onClick = { query = TextFieldValue("") }) {
+                            Icon(
+                                painter = painterResource(R.drawable.close),
+                                contentDescription = null,
+                                tint = SearchBarText,
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = {
+                            searchSource =
+                                if (searchSource == SearchSource.ONLINE) {
+                                    SearchSource.LOCAL
+                                } else {
+                                    SearchSource.ONLINE
+                                }
+                        },
+                    ) {
+                        Icon(
+                            painter =
+                                painterResource(
+                                    when (searchSource) {
+                                        SearchSource.LOCAL -> R.drawable.library_music
+                                        SearchSource.ONLINE -> R.drawable.language
+                                    },
+                                ),
+                            contentDescription = null,
+                            tint = SearchBarText,
+                        )
+                    }
                 }
 
-                SearchSource.ONLINE -> {
-                    OnlineSearchScreen(
-                        query = query.text,
-                        onQueryChange = { query = it },
-                        onSearch = onSearchFromSuggestion,
-                        onDismiss = { /* Don't dismiss when searching from suggestions */ },
-                        pureBlack = pureBlack,
+                // ───────── Contenido ─────────
+                Box(modifier = Modifier.fillMaxSize()) {
+                    if (showExploreGrid) {
+                        ExploreAllGrid(
+                            genres = moodAndGenres?.flatMap { it.items },
+                            onGenreClick = { item ->
+                                navController.navigate(
+                                    "youtube_browse/${item.endpoint.browseId}?params=${item.endpoint.params}",
+                                )
+                            },
+                            contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues(),
+                            isLoading = moodAndGenres == null,
+                        )
+                    } else {
+                        when (searchSource) {
+                            SearchSource.LOCAL -> {
+                                LocalSearchScreen(
+                                    query = query.text,
+                                    onDismiss = { navController.navigateUp() },
+                                    pureBlack = true,
+                                )
+                            }
+
+                            SearchSource.ONLINE -> {
+                                OnlineSearchScreen(
+                                    query = query.text,
+                                    onQueryChange = { query = it },
+                                    onSearch = onSearchFromSuggestion,
+                                    onDismiss = { /* Don't dismiss when searching from suggestions */ },
+                                    pureBlack = true,
+                                )
+                            }
+                        }
+                    }
+
+                    HideOnScrollFAB(
+                        lazyListState = lazyListState,
+                        icon = R.drawable.mic,
+                        onClick = { navController.navigate("recognition") },
                     )
                 }
             }
-
-            HideOnScrollFAB(
-                lazyListState = lazyListState,
-                icon = R.drawable.mic,
-                onClick = { navController.navigate("recognition") },
-            )
         }
     }
 
@@ -348,5 +404,95 @@ fun SearchScreen(
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
         }
+    }
+}
+
+// ───────────────────────── "Explorar todo" ─────────────────────────
+@Composable
+private fun ExploreAllGrid(
+    genres: List<com.metrolist.innertube.pages.MoodAndGenres.Item>?,
+    onGenreClick: (com.metrolist.innertube.pages.MoodAndGenres.Item) -> Unit,
+    contentPadding: PaddingValues,
+    isLoading: Boolean,
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(2),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding =
+            PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 8.dp,
+                bottom = contentPadding.calculateBottomPadding() + 16.dp,
+            ),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Text(
+                text = "Explorar todo",
+                color = Color.White,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+            )
+        }
+
+        if (genres == null && isLoading) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 48.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(color = Color(0xFF1DB954))
+                }
+            }
+        }
+
+        genres?.let { list ->
+            itemsIndexed(list, key = { index, item -> "${index}_${item.title}" }) { index, item ->
+                GenreCard(
+                    title = item.title,
+                    color = CardColors[index % CardColors.size],
+                    onClick = { onGenreClick(item) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GenreCard(
+    title: String,
+    color: Color,
+    onClick: () -> Unit,
+) {
+    val brush =
+        Brush.linearGradient(
+            colors = listOf(color, lerp(color, Color.White, 0.18f)),
+        )
+
+    Box(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(1.75f)
+                .clip(RoundedCornerShape(10.dp))
+                .background(brush)
+                .clickable(onClick = onClick)
+                .padding(12.dp),
+        contentAlignment = Alignment.TopStart,
+    ) {
+        Text(
+            text = title,
+            color = Color.White,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
